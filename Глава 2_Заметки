@@ -1,0 +1,145 @@
+Benefits of Threading
+These are the main benefits of threading:
+1) Ease of reading code
+
+Your code can run concurrently, but still be set out in a very simple, top-down
+linear sequence of commands to the point where—and this is key—you can pre‐
+tend, within the body of your functions, that no concurrency is happening.
+
+2) Parallelism with shared memory
+
+Your code can exploit multiple CPUs while still having threads share memory.
+This is important in many workloads where it would be too costly to move large
+amounts of data between the separate memory spaces of different processes, for
+example.
+
+3) Know-how and existing code
+
+There is a large body of knowledge and best practices available for writing threa‐
+ded applications. There is also a huge amount of existing “blocking” code that
+depends on multithreading for concurrent operation.
+
+Про пункт 2 - параллелилизм. Так как в Питоне есть GIL, который защищает внутреннее состояние интерпретатора, от
+потенциально  и катастрофических эффектов гонки потоков. Побочным его действием является то, что он все потоки
+программы выполняет в одном процессоре. Соответственно, параллелилизмом тут не пахнет.
+
+Пункт 1 про простоту кода тоже сомнителен, т.к. тут тоже нужно предусматривать, что могут возникнуть баги связанные с
+гонкой потоков.
+
+The best practice for using threads is to use the  ThreadPoolExecutorclass from
+the  concurrent.futures module, passing all required data in through the submit()
+method
+Пример:
+
+from concurrent.futures import ThreadPoolExecutor as Executor
+def worker(data):
+    <process the data>
+
+with Executor(max_workers=10) as exe:
+    future = exe.submit(worker, data)
+
+The ThreadPoolExecutor offers an extremely simple interface for running functions
+in a thread—and the best part is that, if needed, you can convert the pool of threads
+into a pool of subprocesses simply by using  ProcessPoolExecutor  instead.It has the
+same API as  ThreadPoolExecutor, which means that your code will be little affected
+by the change. The executor API is also used in asyncio
+
+In general, you’ll prefer your tasks to be somewhat short-lived, so that when your
+program needs to shut down, you can simply call  Executor.shutdown(wait=True)
+and wait a second or two to allow the executor to complete.
+Most importantly: if at all possible, you should try to prevent your threaded code (in
+the preceding example, the  worker()function) from accessing or writing to any
+global variables!
+
+Drawbacks of Threading
+
+1) Threadingis difficult
+
+Threading bugs and race conditions in threaded programs are  the hardest  kinds
+of bugs to fix. With experience, it is possible to design new software that is less
+prone to these problems, but in nontrivial, naively designed software, they can be
+nearly impossible to fix, even by experts. Really!
+
+2) Threadsare resource-intensive
+
+Threads require extra operating system resources to create, such as preallocated,
+per-thread stack space that consumes process virtual memory up front. This is a
+big problem with 32-bit operating systems, because the address space per process
+is limited to 3 GB.
+Nowadays, with the widespread availability of 64-bit operat‐
+ing systems, virtual memory isn’t as precious as it used to be (addressable space
+for virtual memory is typically 48 bits; i.e., 256 TiB). On modern desktop operat‐
+ing systems, the physical memory required for stack space for each thread isn’t
+even allocated by the OS until it is required, including stack space per thread. For
+example, on a modern, 64-bit Fedora 29 Linux with 8 GB memory, creating
+10,000 do-nothing threads with this short snippet:
+
+import os
+from time import sleep
+from threading import Thread
+threads = [
+Thread(target=lambda: sleep(60)) for i in range(10000)
+]
+[t.start() for t in threads]
+print(f'PID = {os.getpid()}')
+[t.join() for t in threads]
+
+Preallocated virtual memory is a staggering ~80 GB (due to 8 MB stack space per
+thread!), but resident memory is only ~130 MB. On a 32-bit Linux system, I
+would be unable to create this many because of the 3 GB user-space address-space limit,
+regardless of actual consumption of physical memory. To get around
+this problem on 32-bit systems, it is sometimes necessary to decrease the
+preconfigured stack size, which you can still do in Python today, with
+threading.stack_size([size]).Obviously, decreasing stack size has implica‐
+tions for runtime safety with respect to the degree to which function calls may be
+nested, including recursion. Single-threaded coroutines have none of these prob‐
+lems and are a far superior alternative for concurrent I/O.
+
+3) Threading can affect throughput (Процессы могут повлиять на пропускную способность)
+
+At very high concurrency levels (say, >5,000 threads), there can also be an impact
+on throughput due to context-switchingcosts, assuming you can figure out how
+to configure your operating system to even allow you to create that many
+threads! It has become so tedious on recent macOS versions, for example, to test
+the preceding 10,000 do-nothing-threads example, that I gave up trying to raise
+the limits at all.
+
+4) Threading is inflexible
+
+The operating system will continually share CPU time with all threads regardless
+of whether a thread is ready to do work or not. For instance, a thread may be
+waiting for data on a socket, but the OS scheduler may still switch to and from
+that thread thousands of times before any actual work needs to be done. (In the
+async world, the select() system call is used to check whether a socket-awaiting
+coroutine needs a turn; if not, that coroutine isn’t even woken up, avoiding any
+switching costs completely.)
+
+Проблема многопоточности
+
+def change(self, knives, forks):
+    self.knives += knives
+    self.forks += forks
+
+В этом куске кода, при большом количестве потоков, разные потоки могут читать информацию о количестве ножей и вилок
+прежде чем другой поток успеет обновить это количество. И возникает проблема.
+Чтобы избежать этой проблемы, код нужно изменить на такой:
+def change(self, knives, forks):
+    with self.lock:
+        self.knives += knives
+        self.forks += forks
+
+Здесь мы добавляем блокировку, которая не даст другому потоку прочитать состояние, пока первый не завершил работу с
+переменными
+
+Note that it was not possible to see the race condition by looking at the source code
+alone. This is because the source code provides no hints about where execution is
+going to switch between threads. That wouldn’t be useful anyway, because the OS can
+switch between threads just about anywhere.
+
+Another, much better, solution—and the point of async programming—is to modify
+our code so that we use only one ThreadBot and configure it to move between all the
+tables as necessary. For our case study, this means that the knives and forks in the
+kitchen will get modified by only a single thread.
+And even better, in our async programs, we’ll be able to see exactly where context will
+switch between multiple concurrent coroutines, because the await keyword indicates
+such places explicitly.
