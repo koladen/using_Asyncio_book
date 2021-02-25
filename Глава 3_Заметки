@@ -1,0 +1,330 @@
+Полезные ссылки:
+https://www.pythonsheets.com/notes/python-asyncio.html
+
+These are a small subset of the whole
+asyncioAPI and can be summarized as follows:
+
+Starting the asyncio event loop
+
+Calling async/await functions
+
+Creating a task to be run on the loop
+
+Waiting for multiple tasks to complete
+
+Closing the loop after all concurrent tasks have completed
+
+Пример Хеллоу Ворлд
+
+import asyncio, time
+
+async def main():
+    print(f'{time.ctime()} Hello!')
+    await asyncio.sleep(1.0)
+    print(f'{time.ctime()} Goodbye!')
+asyncio.run(main())
+
+The New await Keyword
+This new keyword await always takes a parameter and will accept only a thing called
+an awaitable, which is defined as one of these (exclusively!):
+• A coroutine (i.e., the result of a called async def function).
+
+• Any object implementing the __await__()special method. That special method
+must return an iterator.
+
+So if  get_event_loop() and  get_running_loop()work the same, why do they both
+exist? The  get_event_loop()method works only within the  same thread. In fact,
+get_event_loop()will fail if called inside a new thread unless you specifically create
+a new loop with  new_event_loop(),  and set that new instance to be  the loop for that
+thread by calling set_event_loop(). Most of us will only ever need (and want!) a sin‐
+gle loop instance running in a single thread. This is nearly the entire point of async
+programming in the first place.
+In contrast,  get_running_loop()(the recommended method) will always do what
+you expect: because it can be called only within the context of a coroutine, a task, or a
+function called from one of those, it always provides the  current running event loop,
+which is almost always what you want.
+
+asyncio.ensure_future(coro_or_future, *, _loop=None)
+
+Schedule the execution of a coroutine object: wrap it in a future. Return a Taskobject.
+If the argument is a Future, it is returned directly.
+What!? When I first read this, it was very confusing. Here is a (hopefully) clearer
+description of ensure_future():
+• If you pass in a coroutine, it will produce a  Task  instance (and your coroutine
+will be scheduled to run on the event loop). This is identical to calling
+asyncio.create_task()(or  loop.create_task()) and returning the new  Task
+instance.
+• If you pass in a Future  instance (or a Task  instance, because Task  is a subclass of
+Future), you get that very same thing returned, unchanged. Yes, really!
+
+The key point here is that as an end-user application developer, you should never
+need to use  asyncio.ensure_future(). It’s more a tool for framework designers.  If
+you need to schedule a coroutine on the event loop, just do that directly with
+asyncio.create_task().
+
+Асинхронные менеджеры контекста
+
+Example 3-20. Async context manager
+class Connection:
+    def __init__(self, host, port):
+        self.host = host
+        self.port = port
+
+    async def __aenter__(self):
+        self.conn = await get_conn(self.host, self.port)
+        return conn
+
+    async def __aexit__(self, exc_type, exc, tb):
+        await self.conn.close()
+
+async with Connection('localhost', 9001) as conn:
+<do stuff with conn>
+
+Just because you’re using  asyncioin your program, that doesn’t
+mean that all your context managers must be async ones like these.
+They’re useful only if you need to await something inside the enter
+and exit  methods.If there is no blocking I/O code, just use regular
+context managers.
+
+Example 3-22. Thenonblocking way
+
+from contextlib import asynccontextmanager
+
+@asynccontextmanager #1
+async def web_page(url): #2
+    data = await download_webpage(url) #3
+    yield data #4
+    await update_stats(url) #5
+
+async with web_page('google.com') as data:
+    process(data)
+
+1 The new @asynccontextmanager decorator is used in exactly the same way.
+
+2 It does, however, require that the decorated generator function be declared with
+async def.
+
+3 As before, we fetch the data from the URL before making it available to the body
+of the context manager. I have added the await keyword, which tells us that this
+coroutine will allow the event loop to run other tasks while we wait for the net‐
+work call to complete.
+Note that we cannot simply tack on the  await keyword to anything.  This change
+presupposes that we were also able to  modify the  download_webpage()  function
+itself, and convert it into a coroutine that is compatible with the  await  keyword.
+For the times when it is not possible to modify the function, a different approach
+is needed; we’ll discuss that in the next example.
+
+4 As before, the data is made available to the body of the context manager. I’m try‐
+ing to keep the code simple, so I’ve omitted the usual  try/finally  handler that
+you should normally write to deal with exceptions raised in the body of caller.
+Note that the presence of yieldis what changes a function into a  generator func‐
+tion; the additional presence of the async def keywords in point 1 makes this an
+asynchronous generator function. When called, it will return an asynchronous gen‐
+erator. The  inspectm odule has two functions that can test for these:
+isasyncgenfunction()and isasyncgen(), respectively.
+
+5 Here, assume that we’ve also converted the code inside the update_stats()func‐
+tion to allow it to produce coroutines. We can then use the  await  keyword,
+which allows a context switch to the event loop while we wait for the I/O-bound
+work to complete.
+
+Для поддержки сторонних функций использующих БЛОКИРУЮЩИЕ вызовы, или своих, которые мы не можем переписать, используем
+executor
+
+Пример:
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def web_page(url): #1
+    loop = asyncio.get_event_loop()
+    data = await loop.run_in_executor(None, download_webpage, url) #2
+    yield data
+    await loop.run_in_executor(None, update_stats, url) #3
+
+async with web_page('google.com') as data:
+    process(data)
+
+1 For this example, assume that we are  unableto modify the code for our two
+blocking calls,  download_webpage()and  update_stats(); i.e., we can’t alter
+them to be coroutine functions. That’s bad, because the most grave sin of
+event-based programming is breaking the rule that you must never, under any circum‐
+stances, prevent the event loop from processing events.
+To get around the problem, we will use an executorto run the blocking calls in a
+separate thread. The executor is made available to us as an attribute of the event
+loop itself.
+
+2 We call the executor. The signature is  AbstractEventLoop.run_in_execu
+tor(executor,  func,  *args). If you want to use the default executor (which is a
+ThreadPoolExecutor), you must pass  Noneas the value for the  executor
+argument
+
+3 As with the call to  download_webpage(), we also run the other blocking call to
+update_stats()in an executor. Note that you  mustuse the  await  keyword in
+front. If you forget, the execution of the asynchronous generator (i.e., your async
+context manager) will not wait for the call to complete before proceeding
+
+АСИНХРОННЫЕ ИТЕРАТОРЫ
+
+import asyncio
+from aioredis import create_redis
+
+async def main(): #1
+    redis = await create_redis(('localhost', 6379)) #2
+    keys = ['Americas', 'Africa', 'Europe', 'Asia'] #3
+    async for value in OneAtATime(redis, keys): #4
+        await do_something_with(value) #5
+
+class OneAtATime:
+    def __init__(self, redis, keys): #6
+        self.redis = redis
+        self.keys = keys
+
+    def __aiter__(self): #7
+        self.ikeys = iter(self.keys)
+        return self
+
+    async def __anext__(self): #8
+        try:
+            k = next(self.ikeys) #9
+        except StopIteration: #10
+            raise StopAsyncIteration
+        value = await redis.get(k) #11
+        return value
+
+asyncio.run(main())
+
+1 The  main()function: we run it using  asyncio.run()toward the bottom of the
+code sample.
+
+2 We use the high-level interface in aioredisto get a connection
+
+3 Imagine that each of the values associated with these keys is quite large and
+stored in the Redis instance.
+
+4 We’re using  async for: the point is that  iteration  is able to suspend itself  while
+waiting for the next datum to arrive
+
+5 For completeness, imagine that we also perform some I/O-bound activity on the
+fetched value—perhaps a simple data transformation—and then it gets sent on to
+another destination
+
+6 The initializer of this class is quite ordinary: we store the Redis connection
+instance and the list of keys to iterate over
+
+7 Just as in the previous code example with __iter__(), we use __aiter__()to set
+things up for iteration. We create a normal iterator over the keys,  self.ikeys,
+and  return selfbecause  OneAtATimealso implements the  __anext__()  corou‐
+tine method
+
+8 Note that the  __anext__()method is declared with  async def, while the
+__aiter__()method is declared only with def
+
+9 For each key, we fetch the value from Redis: self.ikeys is a regular iterator over
+the keys, so we use next()to move over them.
+
+10 When self.ikeys is exhausted, we handle the StopIteration and simply turn it
+into a  StopAsyncIteration! This is how you signal stop from inside an async
+iterator
+
+11 Finally—the entire point of this example—we can get the data from Redis associ‐
+ated with this key. We can  await the data, which means that other code can run
+on the event loop while we wait on network I/O
+
+Hopefully, this example is clear:  async forprovides the ability to retain the conve‐
+nience of a simple for  loop, even when iterating over data where the iteration itself is
+performing I/O. The benefit is that you can process enormous amounts of data with a
+single loop, because you have to deal with each chunk only in tiny batches
+
+АСИНХРОННЫЕ ГЕНЕРАТОРЫ
+
+Пример:
+import asyncio
+from aioredis import create_redis
+
+async def main(): # 1
+    redis = await create_redis(('localhost', 6379))
+    keys = ['Americas', 'Africa', 'Europe', 'Asia']
+
+    async for value in one_at_a_time(redis, keys): #2
+        await do_something_with(value)
+
+async def one_at_a_time(redis, keys): #3
+    for k in keys:
+        value = await redis.get(k) #4
+        yield value #5
+
+
+asyncio.run(main())
+
+3 Our function is now declared with async def, making it a coroutine function, and
+since this function also contains the yield keyword, we refer to it as an asynchro‐
+nous generator function
+
+4 We don’t have to do the convoluted things necessary in the previous example
+with self.ikeys: here, we just loop over the keys directly and obtain the value…
+
+5 …and then yield it to the caller, just like a normal generator
+
+
+Async Comprehensions
+
+import asyncio
+>>>
+>>> async def doubler(n):
+    ...  for i in range(n):
+...          yield i, i * 2
+        ...  await asyncio.sleep(0.1)
+...
+>>> async def main():
+...  result = [x async for x in doubler(3)]
+...  print(result)
+...  result = {x: y async for x, y in doubler(3)}
+...  print(result)
+...  result = {x async for x in doubler(3)}
+...  print(result)
+...
+>>> asyncio.run(main())
+[(0, 0), (1, 2), (2, 4)]
+{0: 0, 1: 2, 2: 4}
+{(2, 4), (1, 2), (0, 0)}
+
+
+Starting Up and Shutting Down
+
+Shutdown is much more intricate. For shutdown, I previously covered the dance that
+happens inside asyncio.run().  When the async def main()function exits, the fol‐
+lowing actions are taken:
+1. Collect all the still-pending task objects (if any).
+2. Cancel these tasks (this raises  CancelledErrorinside each running coroutine,
+which you may choose to handle in a try/exceptwithin the body of the corou‐
+tine function).
+3. Gather all these tasks into a grouptask.
+4. Use run_until_complete()  on the group task to wait for them to finish—i.e., let
+the CancelledErrorexception be raised and dealt with.
+asyncio.run() performs these actions for you, but in spite of this assistance, a rite of
+passage in building your first few nontrivial asyncioapps is going to be trying to get
+rid of error messages like “Task was destroyed but it is pending!” during shutdown.
+This happens because your application was not expecting one or more of the preced‐
+ing steps.
+
+Пример:
+async def f(delay):
+    await asyncio.sleep(delay)
+
+loop = asyncio.get_event_loop()
+t1 = loop.create_task(f(1))
+t2 = loop.create_task(f(2))
+loop.run_until_complete(t1)
+loop.close()
+
+$ python taskwarning.py
+Task was destroyed but it is pending!
+task: <Task pending coro=<f() done, defined at [...snip...]>
+
+This error is telling you that some tasks had not yet been completed when the loop
+was closed. We want to avoid this, and that is why the idiomatic shutdown procedure
+is to collect all unfinished tasks, cancel them, and then let them all finish  before  clos‐
+ing the loop.  asyncio.run()does all of these steps for you, but it is important to
+understand the process in detail so that you will be able to handle more complex
+situations.
+
